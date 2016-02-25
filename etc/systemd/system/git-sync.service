@@ -1,0 +1,6 @@
+[Unit]
+Description=git-sync
+[Service]
+Type=oneshot
+User=git-sync
+ExecStart=/home/git-sync/git-sync/bin/git-sync.service

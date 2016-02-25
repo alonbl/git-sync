@@ -1,0 +1,8 @@
+[Unit]
+Description=xxx Gerrit
+Requires=gerrit@xxx.service
+[Service]
+Type=oneshot
+ExecStart=/bin/true
+[Install]
+WantedBy=multi-user.target

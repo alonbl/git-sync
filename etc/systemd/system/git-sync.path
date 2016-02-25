@@ -1,0 +1,7 @@
+[Unit]
+Description=git-sync scanner
+Requires=git-sync-pre.service
+[Path]
+PathExistsGlob=/run/git-sync/*.trigger
+[Install]
+WantedBy=multi-user.target

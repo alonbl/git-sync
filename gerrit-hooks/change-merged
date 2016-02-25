@@ -1,0 +1,36 @@
+#!/bin/sh
+
+die() {
+	local m="$1"
+	echo "FATAL: ${m}" 2>&1
+	exit 1
+}
+
+SCRIPTDIR="$(cd "$(dirname "$0")" && pwd)"
+
+SSH_ARGS="-p 22"
+GIT_SYNC_HOST="git-sync@localhost"
+
+VARS="${SCRIPTDIR}"/../etc/git-sync.vars
+[ -r "${VARS}" ] && . "${VARS}"
+
+REPO=
+BRANCH=
+while [ -n "$1" ]; do
+	x="$1"
+	v="${x#*=}"
+	shift
+	case "${x}" in
+		--project)
+			REPO="$1"; shift
+		;;
+		--branch)
+			BRANCH="$1"; shift
+		;;
+	esac
+done
+
+[ -n "${REPO}" ] || die "Repo is missing"
+[ -n "${BRANCH}" ] || die "Branch is missing"
+
+ssh ${SSH_ARGS} "${GIT_SYNC_HOST}" "~/git-sync/bin/trigger --from=slave --repo=${REPO} --branch=${BRANCH}"

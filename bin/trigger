@@ -1,0 +1,52 @@
+#!/bin/sh
+
+die() {
+	local m="$1"
+	echo "FATAL: ${m}" >&2
+	exit 1
+}
+
+MYTMP=
+cleanup() {
+	[ -n "${MYTMP}" ] && rm -f "${MYTMP}"
+}
+trap cleanup 0
+
+SCRIPTDIR="$(dirname $0)"
+P4VAR="${P4VAR:-/run/git-sync}"
+
+SCRIPTDIR="${SCRIPTDIR}/../git-sync.vars"
+[ -r "${VARS}" ] && . "${VARS}"
+
+if [ -n "${SSH_ORIGINAL_COMMAND}" ]; then
+	set -- ${SSH_ORIGINAL_COMMAND}
+fi
+
+FROM=
+REPO=
+BRANCH=
+while [ -n "$1" ]; do
+	x="$1"
+	v="${x#*=}"
+	shift
+	case "${x}" in
+		--from=*)
+			FROM="${v}"
+		;;
+		--repo=*)
+			REPO="${v}"
+		;;
+		--branch=*)
+			BRANCH="${v}"
+		;;
+	esac
+done
+
+[ -n "${FROM}" ] || die "From is missing"
+[ -n "${REPO}" ] || die "Repo is missing"
+[ -n "${BRANCH}" ] || die "Branch is missing"
+
+MYTMP="$(mktemp -p "${P4VAR}")"
+echo "${FROM} ${REPO} ${BRANCH}" > "${MYTMP}"
+mv "${MYTMP}" "${MYTMP}.trigger"
+MYTMP=

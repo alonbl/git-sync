@@ -1,0 +1,88 @@
+#!/bin/sh
+
+die() {
+	local m="$1"
+	echo "FATAL: ${m}" >&2
+	exit 1
+}
+
+MYTMP=
+cleanup() {
+	[ -n "${MYTMP}" ] && rm -fr "${TMP}"
+}
+trap cleanup 0
+
+MYTMP="$(mktemp -d)"
+LOG="${MYTMP}/log"
+
+SCRIPTDIR="$(dirname $0)"
+REPO_CACHE="${SCRIPTDIR}/../git-repos/git-sync.cache"
+TO_LIST=
+FROM="${FROM:-gerrit@$(dnsdomainname)}"
+SUBJECT="${SUBJECT:-git-sync failed}"
+P4VAR="${P4VAR:-/run/git-sync}"
+REPO_CONF="${SCRIPTDIR}/../etc/git-sync.repo"
+
+VARS="${SCRIPTDIR}/../etc/git-sync.vars"
+[ -r "${VARS}" ] && . "${VARS}"
+
+synthesise() {
+	echo "$1" | sed 's#[/$%!]#_#g'
+}
+
+sync_repo() {
+	local master_url="$1"; shift
+	local master_branch="$1"; shift
+	local slave_url="$1"; shift
+	local slave_branch="$1"; shift
+	local to_list="$1"; shift
+
+	( "${SCRIPTDIR}/git-sync.sh" \
+		--repo-cache="${REPO_CACHE}" \
+		--master-url="${master_url}" \
+		--master-branch="${master_branch}" \
+		--slave-url="${slave_url}" \
+		--slave-branch="${slave_branch}" \
+		2>&1 \
+		|| echo FAIL
+	) | tee "${LOG}"
+
+	FAIL=
+	if tail -n1 "${LOG}" | grep -q FAIL; then
+		FAIL=1
+	fi
+
+	if [ -n "${FAIL}" ]; then
+		sendmail ${to_list} << __EOF__
+From: ${FROM} [${master_url}/${master_branch} ${slave_url}/${slave_branch}]
+Subject: ${SUBJECT}
+$(cat ${LOG})
+__EOF__
+
+		exit 1
+	fi
+}
+
+while [ "$(find "${P4VAR}" -name '*.trigger' | wc -l)" != 0 ]; do
+	find "${P4VAR}" -name '*.trigger' -exec mv '{}' '{}.process' \; || die "Cannot set process state for triggers"
+	find "${P4VAR}" -name '*.process' -exec cat '{}' \; | sort | uniq | while read who repo branch; do
+		(
+			conf="${REPO_CONF}/$(synthesise "${who}-${repo}-${branch}")"
+			[ -r "${conf}" ] || die "Missing config for '${repo}' '${branch}' from '${who}'"
+			master_url=
+			master_branch=
+			slave_url=
+			slave_branch=
+			to_list="${TO_LIST}"
+			. "${conf}"
+			[ -n "${master_url}" ] || die "Missing master url"
+			[ -n "${master_branch}" ] || die "Missing master branch"
+			[ -n "${slave_url}" ] || die "Missing slave url"
+			[ -n "${slave_branch}" ] || die "Missing slave branch"
+			sync_repo "${master_url}" "${master_branch}" "${slave_url}" "${slave_branch}" "${to_list}"
+		)
+	done
+	rm -f "${P4VAR}"/*.process
+done
+
+exit 0

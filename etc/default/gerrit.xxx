@@ -1,0 +1,3 @@
+JAVA_OPTIONS=
+GERRIT_WAR=/var/lib/gerrit/xxx/bin/gerrit.war
+GERRIT_SITE=/var/lib/gerrit/xxx

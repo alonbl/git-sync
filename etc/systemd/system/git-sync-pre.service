@@ -1,0 +1,7 @@
+[Unit]
+Description=git-sync-pre
+[Service]
+Type=oneshot
+ExecStartPre=/bin/mkdir -p /run/git-sync
+ExecStartPre=/bin/chown git-sync:git-sync /run/git-sync
+ExecStart=/bin/true
