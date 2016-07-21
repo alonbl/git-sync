@@ -13,7 +13,6 @@ log() {
 }
 
 SCRIPTDIR="$(cd $(dirname "$0") && pwd)"
-ORIGINAL_ARGS="$*"
 REPO_CACHE="${SCRIPTDIR}/../cache/repo"
 MASTER_URL=
 MASTER_BRANCH=master
@@ -22,6 +21,8 @@ SLAVE_BRANCH=master
 FORCE=
 GERRIT_SSH_HOST=git-sync@localhost
 GERRIT_SSH_PORT=29418
+
+COMMAND="$0 $*"
 
 usage() {
 	cat << __EOF__
@@ -85,6 +86,7 @@ if [ -n "${FORCE}" ]; then
 	[ -n "${GERRIT_SSH_HOST}" ] || die "Please specify gerrit ssh host"
 fi
 
+log "Commandline: ${COMMAND}"
 log "Syncing '${MASTER_URL}/${MASTER_BRANCH}' -> '${SLAVE_URL}/${SLAVE_BRANCH}'"
 
 if [ -d "${REPO_CACHE}" ]; then
@@ -109,6 +111,8 @@ log "Fetching slave repo"
 git fetch "${SLAVE_URL}" "${SLAVE_BRANCH}" || die "fetch '${SLAVE_URL}'"
 git checkout -b sync FETCH_HEAD || die "checkout FETCH_HEAD"
 
+slave_head="$(git rev-parse FETCH_HEAD)" || die "Cannot get slave head"
+
 if [ -n "${FORCE}" ]; then
 	BACKUP="slave-$(date -u +"%Y%m%d%H%M%S")-$(git rev-parse --short HEAD)"
 	log "Backing up slave repo to '${BACKUP}'"
@@ -117,6 +121,8 @@ fi
 
 log "Fetching master repo"
 git fetch "${MASTER_URL}" "${MASTER_BRANCH}" || die "fetch '${MASTER_URL}'"
+
+master_head="$(git rev-parse FETCH_HEAD)" || die "Cannot get master head"
 
 log "Rebasing slave on top of master"
 if ! git rebase FETCH_HEAD; then
@@ -128,33 +134,47 @@ if ! git rebase FETCH_HEAD; then
 	die "rebase '${MASTER_URL}/${MASTER_BRANCH}' failed"
 fi
 
-if [ -n "${FORCE}" ]; then
-	log "FORCE MODE"
-	log "Suspending merges"
-	ssh -p "${GERRIT_SSH_PORT}" "${GERRIT_SSH_HOST}" merge-suspend merge-suspend || die "Cannot suspend merges"
-	log "Pusing slave with force"
-	git push --force "${SLAVE_URL}" "sync:${SLAVE_BRANCH}"
-	res=$?
-	log "Resuming merges"
-	ssh -p "${GERRIT_SSH_PORT}" "${GERRIT_SSH_HOST}" merge-suspend merge-resume || die "Cannot resume merges"
-	[ "${res}" = 0 ] || die "Cannot push changes into slave '${SLAVE_URL}/${SLAVE_BRANCH}'"
-else
-	log "Pusing slave"
-	if ! git push "${SLAVE_URL}" "sync:${SLAVE_BRANCH}"; then
-		echo
-		echo "Probably there are commits at same time in both master and slave"
-		echo "Running manually git-sync with --force may resolve the issue."
-		echo "${SCRIPTDIR}/git-sync.sh ${ORIGINAL_ARGS} --force --gerrit-ssh-host=${GERRIT_SSH_HOST} --gerrit-ssh-port=${GERRIT_SSH_PORT}"
-		die "Cannot push changes into slave '${SLAVE_URL}/${SLAVE_BRANCH}'"
+sync_head="$(git rev-parse HEAD)" || die "Cannot get sync head"
+
+if [ -z "${FORCE}" -a "${slave_head}" != "${sync_head}" -a "${master_head}" != "${sync_head}" ]; then
+	echo
+	echo "Probably there are commits at same time in both master and slave"
+	echo "Running manually git-sync with --force may resolve the issue."
+	echo "${COMMAND} --force --gerrit-ssh-host=${GERRIT_SSH_HOST} --gerrit-ssh-port=${GERRIT_SSH_PORT}"
+	die "Cannot push changes into slave '${SLAVE_URL}/${SLAVE_BRANCH}'"
+fi
+
+if [ "${slave_head}" != "${sync_head}" ]; then
+	if [ -n "${FORCE}" ]; then
+		log "FORCE MODE"
+		log "Suspending merges"
+		ssh -p "${GERRIT_SSH_PORT}" "${GERRIT_SSH_HOST}" merge-suspend merge-suspend || die "Cannot suspend merges"
+		log "Pusing slave with force"
+		git push --force "${SLAVE_URL}" "sync:${SLAVE_BRANCH}"
+		res=$?
+		log "Resuming merges"
+		ssh -p "${GERRIT_SSH_PORT}" "${GERRIT_SSH_HOST}" merge-suspend merge-resume || die "Cannot resume merges"
+		[ "${res}" = 0 ] || die "Cannot push changes into slave '${SLAVE_URL}/${SLAVE_BRANCH}'"
+	else
+		log "Pusing slave"
+		if ! git push "${SLAVE_URL}" "sync:${SLAVE_BRANCH}"; then
+			echo
+			echo "Probably there are commits at same time in both master and slave"
+			echo "Running manually git-sync with --force may resolve the issue."
+			echo "${COMMAND} --force --gerrit-ssh-host=${GERRIT_SSH_HOST} --gerrit-ssh-port=${GERRIT_SSH_PORT}"
+			die "Cannot push changes into slave '${SLAVE_URL}/${SLAVE_BRANCH}'"
+		fi
 	fi
 fi
 
-log "Pusing master"
-if ! git push "${MASTER_URL}" "sync:${MASTER_BRANCH}"; then
-	echo
-	echo "Probably there was a commit in master at time we tried to sync"
-	echo "Running git-sync again should resolve the issue."
-	die "push '${MASTER_URL}/${MASTER_BRANCH}'"
+if [ "${master_head}" != "${sync_head}" ]; then
+	log "Pusing master"
+	if ! git push "${MASTER_URL}" "sync:${MASTER_BRANCH}"; then
+		echo
+		echo "Probably there was a commit in master at time we tried to sync"
+		echo "Running git-sync again should resolve the issue."
+		die "push '${MASTER_URL}/${MASTER_BRANCH}'"
+	fi
 fi
 
 git checkout master
